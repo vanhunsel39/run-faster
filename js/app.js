@@ -137,6 +137,52 @@
       <select id="${o.id}"${o.name ? ` name="${o.name}"` : ''}${o.f ? ` data-f="${o.f}"` : ''}>${o.options.map(([v, l]) => `<option value="${v}" ${String(v) === String(o.value) ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
       ${o.hint ? `<span class="hint">${o.hint}</span>` : ''}</div>`;
   }
+  /**
+   * Tijdveld met losse vakjes voor uren, minuten en seconden (gewoon cijfertoetsenbord, geen dubbele punt nodig).
+   * Een verborgen veld (met de oorspronkelijke name / data-f) bevat de tijd als "u:mm:ss" voor de bestaande logica.
+   */
+  function timeFld(o) {
+    const sec = o.sec > 0 ? Math.round(o.sec) : 0;
+    const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+    const val = (n) => (sec ? n : '');
+    const part = (k, unit, max, v, word) => `<label class="tpart"><span class="sr-only">${o.label}: ${word}</span><input type="number" inputmode="numeric" pattern="[0-9]*" min="0" max="${max}" step="1" data-tpart="${k}" value="${v}" placeholder="0" aria-describedby="err-${o.id}"><span class="unit" aria-hidden="true">${unit}</span></label>`;
+    return `<div class="field wide"${o.show ? ` data-show="${o.show}"` : ''}><span class="label" id="lbl-${o.id}">${o.label}</span>
+      <div class="tparts" role="group" aria-labelledby="lbl-${o.id}" data-time="${o.id}">
+        ${part('h', 'uur', 99, val(h), 'uren')}${part('m', 'min', 59, val(m), 'minuten')}${part('s', 'sec', 59, val(s), 'seconden')}
+      </div>
+      <input type="hidden" id="${o.id}"${o.name ? ` name="${o.name}"` : ''}${o.f ? ` data-f="${o.f}"` : ''} value="${sec ? u.clock(sec) : ''}">
+      ${o.hint ? `<span class="hint">${o.hint}</span>` : ''}<span class="terr" id="err-${o.id}" aria-live="polite"></span></div>`;
+  }
+
+  /** Lees de drie vakjes, valideer (min/sec 0–59) en zet de verborgen waarde. */
+  function syncTime(group) {
+    const get = (k) => group.querySelector(`[data-tpart="${k}"]`);
+    const raw = ['h', 'm', 's'].map((k) => get(k).value.trim());
+    const hidden = document.getElementById(group.dataset.time);
+    const err = document.getElementById(`err-${group.dataset.time}`);
+    const [h, m, s] = raw.map((x) => (x === '' ? 0 : Number(x)));
+    const problems = [];
+    if ([h, m, s].some((x) => !Number.isFinite(x) || x < 0 || x % 1)) problems.push('Gebruik alleen hele getallen.');
+    if (m > 59) problems.push('Minuten: 0 tot en met 59.');
+    if (s > 59) problems.push('Seconden: 0 tot en met 59.');
+    get('m').setAttribute('aria-invalid', m > 59 ? 'true' : 'false');
+    get('s').setAttribute('aria-invalid', s > 59 ? 'true' : 'false');
+    if (err) err.textContent = problems.join(' ');
+    const total = h * 3600 + m * 60 + s;
+    hidden.value = !problems.length && total > 0 ? u.clock(total) : (raw.every((x) => x === '') ? '' : (problems.length ? 'ongeldig' : ''));
+  }
+
+  /** Zet een tijdveld van buitenaf (bijv. 'Gebruik de haalbare tijd'). */
+  function setTimeFld(id, sec) {
+    const group = document.querySelector(`[data-time="${id}"]`);
+    if (!group) return;
+    const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = Math.round(sec % 60);
+    group.querySelector('[data-tpart="h"]').value = h;
+    group.querySelector('[data-tpart="m"]').value = m;
+    group.querySelector('[data-tpart="s"]').value = s;
+    syncTime(group);
+  }
+
   function seg(name, opts, cur, label, cls = '') {
     const id = `lbl-${name}`;
     return `<div class="field"><span class="label" id="${id}">${label}</span><div class="seg ${cls}" role="radiogroup" aria-labelledby="${id}">${opts.map(([v, l]) => `<label><input type="radio" name="${name}" value="${v}" ${String(v) === String(cur) ? 'checked' : ''}><span>${esc(l)}</span></label>`).join('')}</div></div>`;
@@ -793,7 +839,7 @@
           ${sel({ id: 'fDist', name: 'distSel', label: 'Afstand', value: distSel, show: 'race speed', options: [['5', '5 km'], ['10', '10 km'], ['21.1', 'Halve marathon'], ['42.2', 'Marathon'], ['custom', 'Andere afstand…']] })}
           ${fld({ id: 'fDistCustom', name: 'distCustom', label: 'Eigen afstand', unit: 'km', mode: 'decimal', step: '0.1', min: 1, max: 100, value: distSel === 'custom' ? g.distanceKm : '', show: 'race speed', showDist: 'custom' })}
           ${fld({ id: 'fRaceDate', name: 'raceDate', type: 'date', label: 'Wedstrijddatum', value: g.raceDate || '', min: u.addDays(u.today(), 7), show: 'race' })}
-          ${fld({ id: 'fTarget', name: 'target', type: 'text', mode: 'numeric', label: 'Doeltijd (optioneel)', ph: 'u:mm:ss', value: g.targetSec ? u.clock(g.targetSec) : '', show: 'race speed' })}
+          ${timeFld({ id: 'fTarget', name: 'target', label: 'Doeltijd (optioneel)', sec: g.targetSec, show: 'race speed' })}
           ${sel({ id: 'fRaceTer', name: 'raceTerrain', label: 'Parcours', value: g.raceTerrain, show: 'race', options: [['flat', 'Vlak'], ['hilly', 'Heuvelachtig'], ['trail', 'Trail']] })}
           ${fld({ id: 'fWeeks', name: 'planWeeks', label: 'Aantal weken', unit: 'wk', mode: 'numeric', min: 4, max: 30, value: g.planWeeks || 12, show: 'speed endurance' })}
           ${fld({ id: 'fLongMin', name: 'longRunMin', label: 'Doel lange duurloop', unit: 'min', mode: 'numeric', min: 30, max: 300, step: 5, value: g.longRunMin || 120, show: 'endurance' })}
@@ -813,11 +859,11 @@
       + sub('Huidige fitheid', `${seg('fitSource', [['race', 'Wedstrijd / tijdrit'], ['easy', 'Rustige duurloop'], ['vdot', 'VDOT bekend']], fi.source || 'race', 'Hoe bepalen we je fitheid?')}
           <div class="row" data-fit="race">
             ${sel({ id: 'fRaceDist', name: 'fitRaceDist', label: 'Afstand', value: fi.raceDist || 5, options: [[3, '3 km'], [5, '5 km'], [10, '10 km'], [21.0975, 'Halve marathon'], [42.195, 'Marathon']] })}
-            ${fld({ id: 'fRaceTime', name: 'fitRaceTime', type: 'text', mode: 'numeric', label: 'Tijd', ph: 'mm:ss', value: fi.raceTime || '' })}
+            ${timeFld({ id: 'fRaceTime', name: 'fitRaceTime', label: 'Tijd', sec: u.parseClock(fi.raceTime) })}
           </div>
           <div class="row" data-fit="easy">
             ${fld({ id: 'fEasyKm', name: 'fitEasyKm', label: 'Afstand', unit: 'km', mode: 'decimal', step: '0.1', min: 1, value: fi.easyKm || '' })}
-            ${fld({ id: 'fEasyTime', name: 'fitEasyTime', type: 'text', mode: 'numeric', label: 'Tijd', ph: 'mm:ss', value: fi.easyTime || '' })}
+            ${timeFld({ id: 'fEasyTime', name: 'fitEasyTime', label: 'Tijd', sec: u.parseClock(fi.easyTime) })}
           </div>
           <div class="row" data-fit="vdot">${fld({ id: 'fVdot', name: 'fitVdot', label: 'VDOT', mode: 'decimal', step: '0.1', min: 20, max: 85, value: u.num(f.vdot, 1).replace(',', '.') })}</div>
           <p class="preview" id="vdotPreview" aria-live="polite"></p>`)
@@ -871,11 +917,11 @@
       <div class="row">
         ${fld({ id: `cDate${i}`, f: 'date', type: 'date', label: 'Datum', max: u.today(), value: a.date || '' })}
         ${fld({ id: `cKm${i}`, f: 'km', label: 'Afstand', unit: 'km', mode: 'decimal', step: '0.1', min: 1, value: a.distanceKm ?? '' })}
-        ${fld({ id: `cTime${i}`, f: 'time', type: 'text', mode: 'numeric', label: 'Tijd', ph: 'u:mm:ss', value: a.timeSec ? u.clock(a.timeSec) : '' })}
+        ${timeFld({ id: `cTime${i}`, f: 'time', label: 'Tijd', sec: a.timeSec })}
         ${sel({ id: `cEff${i}`, f: 'effort', label: 'Inspanning', value: a.effort || 'max', options: Object.entries(RF.goal.EFFORT_LABEL) })}
         ${fld({ id: `cTemp${i}`, f: 'temp', label: 'Temperatuur toen', unit: '°C', mode: 'decimal', min: -20, max: 50, value: a.tempC ?? '' })}
         ${fld({ id: `cHum${i}`, f: 'hum', label: 'Vochtigheid toen', unit: '%', mode: 'numeric', min: 5, max: 100, value: a.humidity ?? '' })}
-        ${fld({ id: `cRef${i}`, f: 'ref', type: 'text', mode: 'numeric', label: '5 km-tijd toen', ph: 'optioneel', value: a.ref5kSec ? u.clock(a.ref5kSec) : '', hint: 'Nodig als de poging ouder is dan 2 maanden', wide: true })}
+        ${timeFld({ id: `cRef${i}`, f: 'ref', label: '5 km-tijd toen (optioneel)', sec: a.ref5kSec, hint: 'Nodig als de poging ouder is dan 2 maanden' })}
       </div>
     </div>`;
   }
@@ -970,7 +1016,7 @@
     if (g.type === 'race' && (!g.raceDate || u.daysBetween(u.today(), g.raceDate) < 7)) errors.push([0, 'Kies een wedstrijddatum minstens een week vooruit.']);
     const tgt = (get('target') || '').trim();
     g.targetSec = tgt ? u.parseClock(tgt) : null;
-    if (tgt && !g.targetSec) errors.push([0, 'Doeltijd niet herkend. Gebruik bijvoorbeeld 49:30 of 1:52:00.']);
+    if (tgt && !g.targetSec) errors.push([0, 'Doeltijd klopt niet: minuten en seconden moeten tussen 0 en 59 liggen.']);
     g.raceTerrain = get('raceTerrain') || 'flat';
     g.raceAltitudeM = Math.max(0, u.parseNum(get('raceAltitudeM')) ?? 0);
     g.raceElevGain = Math.max(0, u.parseNum(get('raceElevGain')) ?? 0);
@@ -991,7 +1037,7 @@
     p.weightKg = u.parseNum(get('weightKg')) || null;
     const fi = { source: get('fitSource') || 'race', raceDist: Number(get('fitRaceDist')), raceTime: get('fitRaceTime'), easyKm: get('fitEasyKm'), easyTime: get('fitEasyTime') };
     const est = estimateVdot(fi, get('fitVdot'));
-    if (est == null && (partialStep == null || partialStep >= 1)) errors.push([1, 'Vul een geldige tijd en afstand in om je fitheid te bepalen.']);
+    if (est == null && (partialStep == null || partialStep >= 1)) errors.push([1, 'Vul een geldige afstand en tijd in om je fitheid te bepalen (minuten en seconden 0–59).']);
     draft.fitness = { ...draft.fitness, input: fi };
     const sameInput = JSON.stringify({ ...(state.fitness.input || {}) }) === JSON.stringify(fi) && fi.source !== 'vdot';
     if (est != null && !sameInput) { draft.fitness.vdot = est; draft.fitness.source = fi.source === 'easy' ? 'easy' : 'race'; }
@@ -1210,7 +1256,7 @@
     html += `<form data-form="log" novalidate>
       ${seg('activity', [['run', 'Hardlopen'], ...Object.keys(RF.sports.TYPES).map((k) => [k, RF.sports.label(k)])], act, 'Activiteit', 'scroll')}
       <div class="row">
-        ${fld({ id: 'lgTime', name: 'duration', type: 'text', mode: 'numeric', label: 'Tijd', ph: 'u:mm:ss', value: p.durationSec ? u.clock(p.durationSec) : '' })}
+        ${timeFld({ id: 'lgTime', name: 'duration', label: 'Tijd', sec: p.durationSec })}
         ${fld({ id: 'lgKm', name: 'distanceKm', label: 'Afstand', unit: 'km', mode: 'decimal', step: '0.01', min: 0, value: p.distanceKm ?? '' })}
         ${fld({ id: 'lgDate', name: 'date', type: 'date', label: 'Datum', max: u.today(), value: p.date || u.today(), wide: true })}
       </div>
@@ -1242,7 +1288,7 @@
     const date = fd.get('date') || u.today();
     const km = u.parseNum(fd.get('distanceKm'));
     const sec = u.parseClock(fd.get('duration'));
-    if (!sec || sec < 60) { $('#logError').textContent = 'Vul een geldige tijd in (bijv. 45:00).'; $('#lgTime').focus(); return; }
+    if (!sec || sec < 60) { $('#logError').textContent = 'Vul een geldige tijd in: uren, minuten (0–59) en seconden (0–59).'; document.querySelector('[data-time="lgTime"] input').focus(); return; }
     const a = pendingImport || {};
     const activity = fd.get('activity') || 'run';
     const log = {
@@ -1443,7 +1489,7 @@
     racePlan: () => openModal('Wedstrijdplan', racePlanHtml(RF.coach.racePlan(state))),
     useFeasible: (d) => {
       const sec = Number(d.sec);
-      if (d.inform === '1') { const f = $('#fTarget'); f.value = u.clock(sec); updateFormPreviews(); markDirty(); toast('Doeltijd ingevuld. Vergeet niet op te slaan.'); return; }
+      if (d.inform === '1') { setTimeFld('fTarget', sec); updateFormPreviews(); markDirty(); toast('Doeltijd ingevuld. Vergeet niet op te slaan.'); return; }
       state.goal.targetSec = sec; state.plan = P.rebuild(state, u.today()); persist(); closeModal(); render(); toast(`Doeltijd aangepast naar ${u.clock(sec)}. Schema herbouwd.`);
     },
     resetWcond: (d) => { delete P.findWorkout(state, d.id).cond; persist(); openWorkout(d.id); render(); },
@@ -1494,6 +1540,11 @@
     },
     exportBackup: () => RF.store.exportJSON(state),
     importBackup: () => { const i = $('#fileBackup'); i.value = ''; i.click(); },
+    resetNow: () => {
+      RF.store.reset(); state = RF.store.defaults(); wizardStep = 0; view = 'today'; openSect = null;
+      history.replaceState(null, '', location.pathname); closeModal(); render(true); toast('Alle gegevens op dit apparaat zijn gewist.');
+    },
+    resetCancel: () => { history.replaceState(null, '', location.pathname + location.hash); closeModal(); },
     reset: (d, el) => {
       if (!confirmTwice(el)) return;
       RF.store.reset(); state = RF.store.defaults(); wizardStep = 0; view = 'today'; render(true); toast('Alles gewist.');
@@ -1585,6 +1636,7 @@
   });
   document.addEventListener('input', (e) => {
     const el = e.target;
+    if (el.dataset && el.dataset.tpart) syncTime(el.closest('[data-time]'));
     if (el.id === 'lgRpe') setText('rpeOut', RPE_TEXT[Number(el.value)]);
     if (el.form && el.form.dataset.form === 'settings') { updateFormPreviews(); markDirty(); }
   });
@@ -1617,4 +1669,9 @@
   RF.app = { toast, get state() { return state; } };
   void terrainOptions;
   render();
+  // Reset-link: .../run-faster/?reset – vraagt eerst om bevestiging
+  if (new URLSearchParams(location.search).has('reset')) {
+    openModal('Alles wissen?', `<p>Hiermee wis je <strong>alle gegevens van Run Faster op dit apparaat</strong>: schema, logboek, doelen en instellingen. Dit kan niet ongedaan worden gemaakt.</p><p class="small muted">Tip: maak eerst een back-up als je iets wilt bewaren (Doelen → Meer → Back-up).</p>
+      <div class="sheet-foot"><button type="button" class="btn" data-action="resetCancel">Annuleren</button><button type="button" class="btn danger" data-action="resetNow">Ja, alles wissen</button></div>`);
+  }
 })(window.RF = window.RF || {});

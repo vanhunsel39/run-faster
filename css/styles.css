@@ -612,3 +612,14 @@ body.player-open { overflow: hidden; }
 .seg-btn[aria-pressed="true"] span { background: var(--surface); color: var(--accent-ink); box-shadow: 0 1px 3px rgba(16, 24, 40, .15), inset 0 0 0 1.5px var(--accent); }
 .review-card { background: linear-gradient(135deg, var(--accent-soft), var(--surface) 70%); }
 .review-card h2 { font-size: 1.4rem; }
+
+/* ---------- tijdveld (uren / minuten / seconden) ---------- */
+.tparts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s2); }
+.tpart { position: relative; display: flex; align-items: center; }
+.tpart input { padding-right: 2.9rem; text-align: right; font-variant-numeric: tabular-nums; font-size: 1.05rem; }
+.tpart .unit { position: absolute; right: var(--s3); color: var(--muted); font-size: .8rem; font-weight: 650; pointer-events: none; }
+.tpart input[aria-invalid="true"] { border-color: var(--bad); box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad) 25%, transparent); }
+.terr { display: block; color: var(--bad); font-size: .8125rem; font-weight: 650; margin-top: var(--s1); }
+.terr:empty { display: none; }
+.tpart input::-webkit-outer-spin-button, .tpart input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.tpart input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
