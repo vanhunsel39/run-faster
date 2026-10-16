@@ -20,6 +20,7 @@
       logs: [],
       notFull: null,
       todayCond: null,
+      prefs: { voice: true, sound: true, vibrate: true },
     };
   }
 
@@ -39,6 +40,7 @@
     for (const k of ['profile', 'fitness', 'goal', 'schedule', 'facilities', 'conditions']) out[k] = { ...d[k], ...(s[k] || {}) };
     out.logs = Array.isArray(s.logs) ? s.logs : [];
     out.activities = Array.isArray(s.activities) ? s.activities : [];
+    out.prefs = { ...d.prefs, ...(s.prefs || {}) };
     out.version = VERSION;
     return out;
   }

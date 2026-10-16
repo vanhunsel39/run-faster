@@ -1,8 +1,8 @@
 /* Service worker: app werkt offline. Verhoog VERSION bij elke wijziging aan de bestanden. */
-const VERSION = 'rf-v5';
+const VERSION = 'rf-v6';
 const FILES = [
   './', './index.html', './css/styles.css', './manifest.webmanifest', './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png',
-  './js/units.js', './js/vdot.js', './js/conditions.js', './js/sports.js', './js/goal.js', './js/coach.js', './js/zones.js', './js/load.js', './js/planner.js',
+  './js/units.js', './js/vdot.js', './js/conditions.js', './js/sports.js', './js/goal.js', './js/coach.js', './js/stats.js', './js/player.js', './js/zones.js', './js/load.js', './js/planner.js',
   './js/importers.js', './js/fitexport.js', './js/storage.js', './js/charts.js', './js/app.js',
 ];
 

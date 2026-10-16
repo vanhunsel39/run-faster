@@ -192,6 +192,58 @@
     crs.goal.courseAttempts = [{ id: 'c4', date: '2026-09-05', distanceKm: 21.1, timeSec: Math.round(v44half * 1.06), effort: 'hard', tempC: 15, humidity: 60 }];
     ok('Parcours: niet-maximale poging telt als ~4 % sneller', Math.abs(RF.goal.analyze(crs).course.factor - 1.06 * 0.96) < 0.01);
 
+    /* ---------- begeleide training ---------- */
+    const pl = base(); pl.plan = RF.planner.rebuild(pl, '2026-10-12');
+    const pctx = { paces: RF.vdot.paces(45), cond: pl.conditions, zs };
+    const tfn = (s) => ({ label: RF.zones.TARGETS[s.zone] ? RF.zones.TARGETS[s.zone].label : '', text: 'x' });
+    const fart = RF.planner.allWorkouts(pl).find((w) => w.steps.some((x) => x.kind === 'repeat'));
+    const seq = RF.player.buildSequence(fart, pctx, tfn);
+    const repCount = fart.steps.filter((x) => x.kind === 'repeat').reduce((s, x) => s + x.reps * x.steps.length, 0) + fart.steps.filter((x) => x.kind !== 'repeat').length;
+    ok('Speler: herhalingen uitgeschreven', seq.length === repCount, `${seq.length} blokken – ${fart.title}`);
+    ok('Speler: totale tijd ≈ geschatte duur', Math.abs(RF.player.plannedSec(seq) - fart.estSec) < 5, `${u.clock(RF.player.plannedSec(seq))} vs ${u.clock(fart.estSec)}`);
+    const distW = { steps: [{ kind: 'active', dur: { type: 'dist', m: 1000 }, zone: 'I' }] };
+    const dseq = RF.player.buildSequence(distW, pctx, tfn);
+    ok('Speler: afstandsstap krijgt geschatte tijd', dseq[0].distM === 1000 && Math.abs(dseq[0].estSec - RF.vdot.paces(45).I) < 2);
+    ok('Speler: krachtcircuit 3 rondes', RF.player.buildSequence({ type: 'strength', steps: [] }, pctx, tfn).filter((x) => x.kind === 'active').length === 18);
+
+    /* ---------- training wisselen ---------- */
+    const swp = base(); swp.plan = RF.planner.rebuild(swp, '2026-10-12');
+    const q2 = RF.planner.allWorkouts(swp).find((w) => w.key && w.type !== 'long' && w.type !== 'race' && w.type !== 'tt');
+    const alts = RF.planner.alternatives(swp, q2);
+    ok('Wisselen: opties beschikbaar', alts.length >= 3, alts.map((a) => a.key).join(','));
+    const origSec = q2.estSec, origTitle = q2.title;
+    RF.planner.applyAlternative(swp, q2.id, 'short50');
+    ok('Wisselen: korter ≈ 50–75 %', q2.estSec < origSec * 0.8 && q2.estSec > origSec * 0.35, `${Math.round(origSec / 60)} → ${Math.round(q2.estSec / 60)} min`);
+    RF.planner.restore(q2);
+    ok('Wisselen: terugzetten herstelt origineel', q2.estSec === origSec && q2.title === origTitle);
+    RF.planner.applyAlternative(swp, q2.id, 'treadmill');
+    ok('Wisselen: loopbandversie zet terrein', q2.cond && q2.cond.terrain === 'treadmill');
+    RF.planner.restore(q2);
+    ok('Wisselen: terugzetten verwijdert loopband', !q2.cond);
+    const famKey = alts.find((a) => a.key.startsWith('alt-'));
+    RF.planner.applyAlternative(swp, q2.id, famKey.key);
+    ok('Wisselen: alternatief blijft zware training op dezelfde dag', q2.key && q2.title !== origTitle && q2.estSec > 0, `${origTitle} → ${q2.title}`);
+    RF.planner.restore(q2);
+    const ez = RF.planner.allWorkouts(swp).find((w) => w.type === 'easy');
+    RF.planner.applyAlternative(swp, ez.id, 'alt-swim');
+    ok('Wisselen: rustige run → zwemmen telt als andere sport', ez.type === 'cross' && ez.sport === 'swim' && !ez.key);
+    RF.planner.restore(ez);
+    ok('Wisselen: zwemmen terugzetten', ez.type === 'easy' && !ez.sport);
+
+    /* ---------- kalender & jaaroverzicht ---------- */
+    const yl = [
+      { date: '2026-01-05', durationSec: 3600, distanceKm: 10, elevGain: 50 }, { date: '2026-01-07', durationSec: 1800, distanceKm: 5 },
+      { date: '2026-01-09', durationSec: 5400, distanceKm: 16, vdot: 44 }, { date: '2026-01-12', durationSec: 1800, distanceKm: 5 },
+      { date: '2026-01-14', durationSec: 1800, distanceKm: 5 }, { date: '2026-01-16', durationSec: 1800, distanceKm: 5 },
+      { date: '2026-01-14', durationSec: 3600, activity: 'crossfit' }, { date: '2025-12-30', durationSec: 1800, distanceKm: 5 },
+    ];
+    const jan = RF.stats.monthSummary(yl, 2026, 0);
+    ok('Maand: km, runs en andere sport', jan.km === 46 && jan.runs === 6 && jan.cross === 1, `${jan.km} km, ${jan.runs} runs`);
+    const yr = RF.stats.yearSummary(yl, 2026);
+    ok('Jaar: langste run, beste VDOT, drukste maand', yr.longest.distanceKm === 16 && yr.bestVdot === 44 && yr.mostActive === 0);
+    ok('Jaar: reeks van 2 weken met 3+ runs', yr.streak === 2, yr.streak);
+    ok('Niveau: 0/1/2/3/4', [0, 20, 45, 75, 120].map(RF.stats.level).join('') === '01234');
+
     /* ---------- importers ---------- */
     // GPX: 10 × 100 m, 30 s per punt, 50 m stijging
     const step = 100 / 111195;

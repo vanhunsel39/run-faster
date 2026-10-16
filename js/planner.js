@@ -625,6 +625,105 @@
     if (!w.original) return;
     Object.assign(w, w.original);
     delete w.original;
+    for (const k of ['cond', 'sport', 'crossMin', 'intensity']) if (w[k] === null) delete w[k];
+  }
+
+  /* ---------- training wisselen ---------- */
+  /** Context van de week waarin `date` valt, voor de sessiebouwers. */
+  function weekCtx(state, date) {
+    const g = state.goal, cond = state.conditions || {};
+    const wk = state.plan ? weekOf(state, date) : null;
+    return {
+      phase: wk ? wk.phase : 'base', style: state.coachStyle || 'balanced', level: state.profile.experience || 'intermediate',
+      goalKm: g.type === 'endurance' ? 21.1 : (g.distanceKm || 10), goalType: g.type,
+      saba: cond.terrain === 'steep' || cond.terrain === 'trail', fac: state.facilities || {},
+      goalPace: (state.plan && state.plan.goalPace) || goalPaceFor(state, date).pace, raceTerrain: g.raceTerrain, cutback: !!(wk && wk.cutback),
+    };
+  }
+
+  const FAMILY = {
+    speed: { types: ['intervals', 'reps', 'fartlek', 'hills', 'stairs'], alts: [['alt-vo2', 'VO2max-intervallen', 'Zelfde prikkel, vaste herhalingen'], ['alt-hills', 'Heuvelherhalingen', 'Zelfde zware prikkel bergop – minder impact op vlak tempo'], ['alt-fartlek', 'Fartlek', 'Speelse variant op gevoel, ideaal zonder vlak parcours']] },
+    threshold: { types: ['threshold', 'subthreshold', 'steady', 'progression', 'racepace'], alts: [['alt-tempo', 'Tempoloop', 'Eén aaneengesloten blok op drempel'], ['alt-cruise', 'Cruise-intervallen', 'Drempelblokken met korte pauzes'], ['alt-subT', 'Sub-drempel', 'Net onder je drempel, lagere herstelkosten']] },
+  };
+
+  /** Mogelijke wissels voor een training. */
+  function alternatives(state, w) {
+    if (!w || NONRUN.has(w.type) || w.type === 'race') return [];
+    const out = [];
+    const c = condFor(state, w);
+    if (c.terrain !== 'treadmill') out.push({ key: 'treadmill', label: 'Loopband-versie', desc: 'Zelfde training op de loopband (1 % helling). Tempo’s worden vlakke tempo’s.' });
+    if (w.estSec >= 30 * 60 && w.type !== 'tt') {
+      out.push({ key: 'short75', label: 'Korter (± 75 %)', desc: `Ca. ${Math.round(w.estSec * 0.75 / 60)} min – minder herhalingen of kortere duur.` });
+      out.push({ key: 'short50', label: 'Veel korter (± 50 %)', desc: `Ca. ${Math.round(w.estSec * 0.5 / 60)} min – voor een drukke dag.` });
+    }
+    for (const f of Object.values(FAMILY)) {
+      if (f.types.includes(w.type)) f.alts.forEach(([key, label, desc]) => { if (!w.title.toLowerCase().startsWith(label.toLowerCase().split(' ')[0])) out.push({ key, label, desc }); });
+    }
+    if (['easy', 'downhill', 'mlr', 'runwalk', 'recovery'].includes(w.type)) {
+      out.push({ key: 'alt-swim', label: 'Zwemmen (rustig)', desc: 'Aerobe training zonder impact – goed als je benen zwaar zijn.' });
+      out.push({ key: 'alt-bike', label: 'Fietsen (rustig)', desc: 'Aerobe training met weinig impact.' });
+    }
+    if (w.type === 'long') out.push({ key: 'alt-hike', label: 'Lange hike', desc: 'Tijd op de benen met minder impact (≈ 1,3 × de duur). Op Saba stevig bergop.' });
+    return out;
+  }
+  function condFor(state, w) { return w.cond || state.conditions || {}; }
+
+  function snapshot(w) {
+    return JSON.parse(JSON.stringify({ title: w.title, steps: w.steps, notes: w.notes, type: w.type, estSec: w.estSec, estKm: w.estKm, key: !!w.key, cond: w.cond || null, sport: w.sport || null, crossMin: w.crossMin || null, intensity: w.intensity || null }));
+  }
+
+  /** Voer een wissel uit. Origineel blijft bewaard (terugzetten kan). Geeft een melding terug. */
+  function applyAlternative(state, id, key) {
+    const w = findWorkout(state, id);
+    if (!w) return null;
+    if (!w.original) w.original = snapshot(w);
+    const paces = RF.vdot.paces(state.fitness.vdot);
+    const c = weekCtx(state, w.date);
+    // zwaarte van het alternatief volgt de fase (basis licht, specifiek zwaarder)
+    const k = c.cutback ? 0 : { base: 0, build: 0.5, peak: 0.8, taper: 0, test: 0.5 }[c.phase] ?? 0.5;
+    const toCross = (sport, factor, intensity, title) => {
+      const min = r5(w.estSec / 60 * factor);
+      Object.assign(w, { type: 'cross', sport, crossMin: min, intensity, key: false, steps: [], title: `${title} ${min} min`, notes: [`In plaats van: ${w.original.title}.`, RF.sports.type(sport).note].filter(Boolean) });
+      w.estSec = min * 60; w.estKm = 0;
+    };
+    const build = (fn) => {
+      const s = fn();
+      Object.assign(w, { type: s.type, title: s.title, steps: s.steps, notes: [`Gewisseld van: ${w.original.title}.`].concat(s.notes || []) });
+    };
+    switch (key) {
+      case 'treadmill':
+        w.cond = { ...state.conditions, preset: 'custom', terrain: 'treadmill' };
+        w.notes = ['Loopband: zet hem op 1 % helling. Tempo’s gelden als vlak.'].concat((w.notes || []).filter((n) => !/loopband/i.test(n)));
+        break;
+      case 'short75': case 'short50': {
+        const f = key === 'short75' ? 0.75 : 0.5;
+        const scale = (steps) => steps.forEach((s) => {
+          if (s.kind === 'repeat') s.reps = Math.max(1, Math.round(s.reps * f));
+          else if (s.dur.type === 'time' && s.kind === 'active') s.dur.sec = Math.max(300, Math.round(s.dur.sec * f / 60) * 60);
+          else if (s.dur.type === 'time' && (s.kind === 'warmup' || s.kind === 'cooldown')) s.dur.sec = Math.max(300, Math.round(s.dur.sec * Math.max(f, 0.7) / 60) * 60);
+        });
+        scale(w.steps);
+        w.title = `${w.original.title} (${f === 0.75 ? 'korter' : 'kort'})`;
+        break;
+      }
+      case 'alt-vo2': build(() => S.vo2(c, k)); break;
+      case 'alt-hills': build(() => S.hillRepeats(c, k)); break;
+      case 'alt-fartlek': build(() => S.fartlek(c, k)); break;
+      case 'alt-tempo': build(() => S.tempo(c, k)); break;
+      case 'alt-cruise': build(() => S.cruise(c, k)); break;
+      case 'alt-subT': build(() => S.subT(c, k, 0)); break;
+      case 'alt-swim': toCross('swim', 1, 'light', 'Zwemmen'); break;
+      case 'alt-bike': toCross('bike', 1.1, 'light', 'Fietsen'); break;
+      case 'alt-hike': toCross('hike', 1.3, 'medium', 'Lange hike'); break;
+      default: return null;
+    }
+    if (w.type !== 'cross') { const st = stats(w, paces); w.estSec = Math.round(st.sec); w.estKm = Math.round(st.km * 10) / 10; }
+    // controle: zware dagen naast elkaar?
+    const hard = key.startsWith('alt-') ? allWorkouts(state).filter((x) => x.key && !x.skipped && !NONRUN.has(x.type) && x.type !== 'long').map((x) => x.date).sort() : [];
+    for (let j = 1; j < hard.length; j++) {
+      if (u.daysBetween(hard[j - 1], hard[j]) === 1 && (hard[j] === w.date || hard[j - 1] === w.date)) return 'Gewisseld. Let op: er staat een zware training op de dag ervoor of erna.';
+    }
+    return 'Training gewisseld. Terugzetten kan via ‘Origineel terug’.';
   }
 
   /** Verlaag de komende n dagen: volume × factor, kwaliteit -> rustig (behalve als keepQuality). */
@@ -764,5 +863,6 @@
     generate, rebuild, stats, targetFor, flatPace, walkSteps,
     findWorkout, allWorkouts, reduceUpcoming, setNotFull, clearNotFull, restore, move, insights,
     pickQualityDays, assignPhases, PHASE_LABEL, STYLE_LABEL, NONRUN,
+    weekCtx, alternatives, applyAlternative, sessions: S,
   };
 })(window.RF = window.RF || {});

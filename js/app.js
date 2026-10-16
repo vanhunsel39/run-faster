@@ -11,6 +11,7 @@
   let pendingImport = null;
   let pendingIntensity = null;
   let openSect = null;
+  let calY = new Date().getFullYear(), calM = new Date().getMonth(), yearSel = calY;
 
   /* ---------- iconen ---------- */
   const svg = (d, extra = '') => `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"${extra}>${d}</svg>`;
@@ -38,6 +39,10 @@
     layers: svg('<path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/>'),
     trash: svg('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>'),
     more: svg('<circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/>'),
+    play: svg('<path d="M7 4.5v15l12-7.5z"/>'),
+    swap: svg('<path d="M4 8h13l-3-3M20 16H7l3 3"/>'),
+    chevL: svg('<path d="M15 5l-7 7 7 7"/>'),
+    chevR: svg('<path d="M9 5l7 7-7 7"/>'),
   };
 
   const TYPE_LABEL = {
@@ -242,12 +247,15 @@
     const notes = w.notes && w.notes.length ? (opts.hero
       ? `<details class="disclosure"><summary>Tips van de coach (${w.notes.length})</summary><ul class="notes">${w.notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul></details>`
       : `<ul class="notes">${w.notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul>`) : '';
+    const canPlay = !log && ((w.steps && w.steps.length) || w.type === 'strength') && w.date <= u.addDays(u.today(), 1);
+    const logBtn = w.type === 'strength'
+      ? `<button type="button" class="btn${canPlay ? '' : ' primary'}" data-action="quickDone" data-id="${esc(w.id)}">${ICON.check} Gedaan</button>`
+      : `<button type="button" class="btn${canPlay ? '' : ' primary'}" data-action="logWorkout" data-id="${esc(w.id)}">${ICON.pen} ${w.type === 'cross' ? 'Activiteit loggen' : canPlay ? 'Loggen' : 'Training loggen'}</button>`;
     const primary = !log
-      ? (w.type === 'strength'
-        ? `<button type="button" class="btn primary" data-action="quickDone" data-id="${esc(w.id)}">${ICON.check} Gedaan</button>`
-        : `<button type="button" class="btn primary" data-action="logWorkout" data-id="${esc(w.id)}">${ICON.pen} ${w.type === 'cross' ? 'Activiteit loggen' : 'Training loggen'}</button>`)
+      ? (canPlay ? `<button type="button" class="btn primary" data-action="startPlayer" data-id="${esc(w.id)}">${ICON.play} Start training</button>` : logBtn)
       : '';
     const secondary = [
+      !log && canPlay ? logBtn : '',
       !log && w.type !== 'strength' ? `<button type="button" class="btn" data-action="importFor" data-id="${esc(w.id)}">${ICON.upload} Garmin</button>` : '',
       w.steps && w.steps.length && !log ? `<button type="button" class="btn" data-action="exportFit" data-id="${esc(w.id)}">${ICON.watch} Naar horloge</button>` : '',
       opts.hero ? `<button type="button" class="btn" data-action="openWorkout" data-id="${esc(w.id)}">${ICON.more} Meer</button>` : '',
@@ -401,6 +409,8 @@
     else if (view === 'progress') main.innerHTML = renderProgress();
     else if (view === 'goals') main.innerHTML = renderGoals();
     else main.innerHTML = renderToday();
+    const hw = main.querySelector('.heat-wrap');
+    if (hw) { const t = u.today(); const frac = yearSel === Number(t.slice(0, 4)) ? u.daysBetween(`${yearSel}-01-01`, t) / 365 : 1; hw.scrollLeft = Math.max(0, hw.scrollWidth * frac - hw.clientWidth * 0.8); }
     RF.charts.bind(main);
     document.querySelectorAll('[data-nav]').forEach((b) => {
       if (b.dataset.nav === view && state.onboarded) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
@@ -533,6 +543,118 @@
     return html;
   }
 
+  /* ---------- kalender & jaaroverzicht ---------- */
+  const MONTHS_LONG = ['januari', 'februari', 'maart', 'april', 'mei', 'juni', 'juli', 'augustus', 'september', 'oktober', 'november', 'december'];
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const LV_LABEL = ['geen run', '< 30 min', '30–60 min', '60–90 min', '> 90 min'];
+
+  function mainOf(ws) {
+    return ws.find((w) => w.type === 'race') || ws.find((w) => w.key && w.type !== 'long') || ws.find((w) => w.type === 'long') || ws.find((w) => !P.NONRUN.has(w.type)) || ws.find((w) => w.type === 'cross');
+  }
+
+  function calendarHtml() {
+    const dt = RF.stats.dayTotals(state.logs);
+    const t = u.today();
+    const first = `${calY}-${pad2(calM + 1)}-01`;
+    const daysIn = new Date(calY, calM + 1, 0).getDate();
+    const lead = u.weekday(first) - 1;
+    const ms = RF.stats.monthSummary(state.logs, calY, calM);
+    const all = P.allWorkouts(state).filter((w) => w.date.startsWith(first.slice(0, 7)) && w.type !== 'strength');
+    let cells = '';
+    for (let i = 0; i < lead; i++) cells += '<li class="cal-empty" aria-hidden="true"></li>';
+    for (let d = 1; d <= daysIn; d++) {
+      const date = `${calY}-${pad2(calM + 1)}-${pad2(d)}`;
+      const tot = dt[date];
+      const lv = RF.stats.level(tot ? tot.runMin : 0);
+      const plan = date >= t ? mainOf(all.filter((w) => w.date === date)) : null;
+      const dots = [];
+      if (tot && tot.hard) dots.push('tc-key');
+      if (tot && tot.long) dots.push('tc-long');
+      if (tot && tot.crossMin) dots.push('tc-cross');
+      const parts = [];
+      if (tot && tot.runMin) parts.push(`${u.dur(tot.runMin * 60)} hardlopen${tot.km ? `, ${u.km(tot.km)}` : ''}`);
+      if (tot && tot.crossMin) parts.push(`${u.dur(tot.crossMin * 60)} andere sport`);
+      if (plan) parts.push(`gepland: ${plan.title}`);
+      const label = `${u.dateLong(date)}: ${parts.length ? parts.join(', ') : 'geen training'}`;
+      cells += `<li><button type="button" class="cal-day lv${lv}${date === t ? ' is-today' : ''}${date > t ? ' future' : ''}" data-action="calDay" data-date="${date}" aria-label="${esc(label)}">
+        <span class="cal-n" aria-hidden="true">${d}</span>
+        <span class="cal-dots" aria-hidden="true">${dots.map((c) => `<i class="${c}"></i>`).join('')}${plan ? `<i class="plan ${typeClass(plan)}"></i>` : ''}</span></button></li>`;
+    }
+    return `<div class="card cal-card">
+      <div class="cal-head"><button type="button" class="icon-btn" data-action="calMove" data-dir="-1" aria-label="Vorige maand">${ICON.chevL}</button>
+        <h2 id="calTitle" tabindex="-1">${MONTHS_LONG[calM]} ${calY}</h2>
+        <button type="button" class="icon-btn" data-action="calMove" data-dir="1" aria-label="Volgende maand">${ICON.chevR}</button></div>
+      <div class="cal-tot"><span><strong>${u.num(ms.km, 1)}</strong> km</span><span><strong>${u.dur(ms.runMin * 60)}</strong> lopen</span><span><strong>${ms.runs}</strong> runs</span>${ms.cross ? `<span><strong>${ms.cross}</strong> andere sport</span>` : ''}</div>
+      <ol class="cal cal-wd" aria-hidden="true">${[1, 2, 3, 4, 5, 6, 7].map((d) => `<li>${u.DAY_SHORT[d]}</li>`).join('')}</ol>
+      <ol class="cal" aria-label="Dagen van ${MONTHS_LONG[calM]}">${cells}</ol>
+      <ul class="cal-legend" aria-hidden="true">${[1, 2, 3, 4].map((l) => `<li><i class="sw lv${l}"></i>${LV_LABEL[l]}</li>`).join('')}<li><i class="dot tc-key"></i>zwaar</li><li><i class="dot tc-long"></i>lang</li><li><i class="dot tc-cross"></i>andere sport</li><li><i class="dot plan tc-easy"></i>gepland</li></ul>
+    </div>`;
+  }
+
+  function calDayModal(date) {
+    const logs = state.logs.filter((l) => l.date === date);
+    const ws = P.allWorkouts(state).filter((w) => w.date === date);
+    let h = '';
+    if (logs.length) {
+      h += `<h3 class="sub-title">Gedaan</h3><ul class="sheet-list">${logs.map((l) => {
+        const run = RF.sports.isRunLog(l);
+        const bits = [l.distanceKm ? u.km(l.distanceKm) : '', u.clock(l.durationSec), run && l.distanceKm ? u.pace(l.durationSec / l.distanceKm) : '', l.rpe ? `RPE ${l.rpe}` : ''].filter(Boolean).join(' · ');
+        return `<li><button type="button" class="sheet-btn" data-action="viewLog" data-id="${esc(l.id)}"><span class="type-ico ${run ? 'tc-easy' : 'tc-cross'}">${run ? ICON.run : ICON.ball}</span><span><strong>${esc(run ? 'Hardlopen' : RF.sports.label(l.activity))}</strong><small>${esc(bits)}</small></span></button></li>`;
+      }).join('')}</ul>`;
+    }
+    if (ws.length) h += `<h3 class="sub-title" style="margin-top:var(--s4)">Schema</h3><ul class="day-list">${ws.map(dayButton).join('')}</ul>`;
+    if (!h) h = '<p class="muted">Geen training op deze dag.</p>';
+    openModal(u.dateLong(date), h);
+  }
+
+  function yearHtml() {
+    const thisYear = Number(u.today().slice(0, 4));
+    const years = [...new Set(state.logs.map((l) => Number(l.date.slice(0, 4))).concat(thisYear))].sort();
+    if (!years.includes(yearSel)) yearSel = years[years.length - 1];
+    const y = yearSel;
+    const ys = RF.stats.yearSummary(state.logs, y);
+    const dt = RF.stats.dayTotals(state.logs);
+    // heatmap (weken × dagen)
+    const start = u.mondayOf(`${y}-01-01`), end = `${y}-12-31`;
+    const STEP = 15, CELL = 12, LEFT = 22, TOP = 16;
+    let col = 0, rects = '', months = '';
+    let lastMonth = -1;
+    for (let m = start; m <= end; m = u.addDays(m, 7), col++) {
+      for (let i = 0; i < 7; i++) {
+        const date = u.addDays(m, i);
+        if (date < `${y}-01-01` || date > end) continue;
+        const tot = dt[date];
+        const lv = RF.stats.level(tot ? tot.runMin : 0);
+        const txt = `${u.dateShort(date)}: ${tot && tot.runMin ? `${u.dur(tot.runMin * 60)} hardlopen` : 'geen run'}${tot && tot.crossMin ? `, ${u.dur(tot.crossMin * 60)} andere sport` : ''}`;
+        rects += `<rect class="hm lv${lv}" x="${LEFT + col * STEP}" y="${TOP + i * STEP}" width="${CELL}" height="${CELL}" rx="3"><title>${esc(txt)}</title></rect>`;
+        const mo = u.parseISO(date).getMonth();
+        if (i === 0 && mo !== lastMonth && u.parseISO(date).getDate() <= 7) { months += `<text class="tick" x="${LEFT + col * STEP}" y="11">${u.MONTHS[mo]}</text>`; lastMonth = mo; }
+      }
+    }
+    const W = LEFT + col * STEP, H = TOP + 7 * STEP;
+    const dayLbl = [[0, 'ma'], [2, 'wo'], [4, 'vr'], [6, 'zo']].map(([i, l]) => `<text class="tick" x="0" y="${TOP + i * STEP + 10}">${l}</text>`).join('');
+    const heat = `<figure class="chart"><figcaption>Elke dag van ${y}</figcaption>
+      <div class="heat-wrap"><svg class="heat" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Heatmap van je hardlooptijd per dag in ${y}: ${ys.activeDays} actieve dagen.">${months}${dayLbl}${rects}</svg></div>
+      <ul class="cal-legend" aria-hidden="true"><li>minder</li>${[0, 1, 2, 3, 4].map((l) => `<li><i class="sw lv${l}"></i></li>`).join('')}<li>meer</li></ul>
+      <details class="chart-table"><summary>Toon als tabel</summary>${rtable(['Maand', 'Km', 'Tijd', 'Runs', 'Andere sport'], ys.months.map((m, i) => [MONTHS_LONG[i], u.num(m.km, 1), u.dur(m.runMin * 60), m.runs, m.cross]))}</details></figure>`;
+    const bars = RF.charts.bars({ title: `Kilometers per maand in ${y}`, categories: u.MONTHS.slice(), series: [{ name: 'Km', cls: 's1', values: ys.months.map((m) => Math.round(m.km * 10) / 10) }], fmt: (v) => `${u.num(v, v % 1 ? 1 : 0)} km` });
+    const review = [
+      ['Gelopen', `${u.km(ys.km, 0)} · ${u.dur(ys.runMin * 60)}`],
+      ['Runs', `${ys.runs} (${ys.activeDays} actieve dagen)`],
+      ['Hoogtemeters', `+${u.meters(ys.elev)}`],
+    ];
+    if (ys.longest) review.push(['Langste run', `${u.km(ys.longest.distanceKm)} · ${u.dateShort(ys.longest.date)}`]);
+    if (ys.bestVdot) review.push(['Beste VDOT', u.num(ys.bestVdot, 1)]);
+    if (ys.mostActive != null) review.push(['Drukste maand', MONTHS_LONG[ys.mostActive]]);
+    review.push(['Langste reeks', `${ys.streak} ${ys.streak === 1 ? 'week' : 'weken'} op rij met 3+ runs`]);
+    if (ys.cross) review.push(['Andere sport', `${ys.cross} sessies · ${u.num(ys.crossShare * 100, 0)} % van je tijd`]);
+    return `<h2 class="section-title">Jaaroverzicht</h2>
+      ${years.length > 1 ? `<div class="seg" role="group" aria-label="Kies een jaar" style="margin-bottom:var(--s3)">${years.map((yy) => `<label><button type="button" class="seg-btn" data-action="setYear" data-year="${yy}" aria-pressed="${yy === y}"><span>${yy}</span></button></label>`).join('')}</div>` : ''}
+      <div class="card review-card"><p class="eyebrow">Year in Review</p><h2>${y}${y === thisYear ? ' tot nu toe' : ''}</h2>${kv(review)}</div>
+      <div class="card">${heat}</div>
+      <div class="card">${bars}</div>`;
+  }
+
   function renderProgress() {
     const t = u.today();
     const z = zs();
@@ -546,6 +668,7 @@
       <div class="stat"><p class="label">Belasting (ACWR)</p><p class="value">${a.ratio ? u.num(a.ratio, 2) : '–'}</p><p class="sub">${!a.reliable ? 'na 3 weken betrouwbaar' : a.ratio > 1.5 ? 'te snelle stijging' : a.ratio < 0.8 ? 'lager dan gewend' : 'in balans (0,8–1,3)'}</p></div>
       <div class="stat"><p class="label">Rustig (zone 1–2)</p><p class="value">${share ? `${u.num(share.low * 100, 0)} %` : '–'}</p><p class="sub">doel ≈ 80 %</p></div>
     </div>`;
+    html += `<h2 class="section-title">Kalender</h2>${calendarHtml()}`;
 
     if (state.plan) {
       const weeks = state.plan.weeks;
@@ -593,6 +716,8 @@
       const tot = zsum.reduce((x, y) => x + y, 0) || 1;
       html += `<div class="card">${RF.charts.hbars({ title: 'Tijd per hartslagzone (28 dagen)', rows: zsum.map((s, i) => ({ label: `Zone ${i + 1}`, value: s, text: `${u.dur(s)} · ${u.num(s / tot * 100, 0)} %` })) })}</div>`;
     }
+
+    html += yearHtml();
 
     const dists = [[1000, '1 km'], [5000, '5 km'], [10000, '10 km'], [21097.5, 'Halve marathon'], [42195, 'Marathon']];
     html += `<div class="card"><h2>Wedstrijdvoorspellingen</h2><p class="small muted">Vlak parcours, koel weer (VDOT-model van Jack Daniels).</p>${rtable(['Afstand', 'Nu', 'Tempo', ...(state.plan ? ['Schemadoel'] : [])], dists.map(([m, l]) => {
@@ -1047,6 +1172,8 @@
         ${w.skipped ? `<button type="button" class="btn" data-action="unskip" data-id="${esc(w.id)}">Toch doen</button>` : `<button type="button" class="btn" data-action="skip" data-id="${esc(w.id)}">${ICON.skip} Overslaan</button>`}
         ${w.original ? `<button type="button" class="btn" data-action="restore" data-id="${esc(w.id)}">Origineel terug</button>` : ''}
         ${w.key && w.type !== 'race' ? `<button type="button" class="btn" data-action="easifyOne" data-id="${esc(w.id)}">Maak rustig</button>` : ''}</div></form>`;
+      const alts = P.alternatives(state, w);
+      if (alts.length) html += `<h3 class="sub-title" style="margin-top:var(--s5)">Wisselen</h3><ul class="sheet-list">${alts.map((a) => `<li><button type="button" class="sheet-btn" data-action="swapAlt" data-id="${esc(w.id)}" data-key="${a.key}"><span class="type-ico ${a.key.startsWith('alt-swim') || a.key.startsWith('alt-bike') || a.key === 'alt-hike' ? 'tc-cross' : 'tc-easy'}">${ICON.swap}</span><span><strong>${esc(a.label)}</strong><small>${esc(a.desc)}</small></span></button></li>`).join('')}</ul>`;
     } else {
       html += `<div class="btn-row"><button type="button" class="btn danger" data-action="deleteLog" data-id="${esc(log.id)}">${ICON.trash} Log verwijderen</button></div>`;
     }
@@ -1262,6 +1389,30 @@
       }
     },
     openWorkout: (d) => openWorkout(d.id),
+    startPlayer: (d) => {
+      const w = P.findWorkout(state, d.id);
+      if (!w) return;
+      closeModal();
+      const c = ctx(w.date, w);
+      const seq = RF.player.buildSequence(w, c, (s) => targetText(s, c));
+      if (!seq.length) { toast('Deze training heeft geen stappen om te begeleiden.'); return; }
+      RF.player.open({
+        workout: w, seq, prefs: { ...state.prefs },
+        onPrefs: (p) => { state.prefs = { ...p }; persist(); },
+        onFinish: (sec) => {
+          if (w.type === 'strength') { actions.quickDone({ id: w.id }); return; }
+          const timeOnly = !JSON.stringify(w.steps).includes('"dist"');
+          logForm({ date: u.today(), durationSec: sec, distanceKm: timeOnly && effortCond(c.cond) ? null : Math.round(w.estKm * Math.min(1.2, sec / Math.max(1, w.estSec)) * 10) / 10, activity: 'run' }, w.id);
+        },
+      });
+    },
+    swapAlt: (d) => {
+      const msg = P.applyAlternative(state, d.id, d.key);
+      persist(); render(); openWorkout(d.id); toast(msg || 'Gewisseld.');
+    },
+    calMove: (d) => { const n = Number(d.dir); calM += n; if (calM < 0) { calM = 11; calY--; } if (calM > 11) { calM = 0; calY++; } render(); const c = $('#calTitle'); if (c) c.focus(); },
+    calDay: (d) => calDayModal(d.date),
+    setYear: (d) => { yearSel = Number(d.year); render(); },
     logWorkout: (d) => {
       const w = P.findWorkout(state, d.id);
       const cross = w.type === 'cross';
